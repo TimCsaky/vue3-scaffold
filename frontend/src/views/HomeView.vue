@@ -4,20 +4,13 @@ import * as L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import '@geoman-io/leaflet-geoman-free';
 import '@geoman-io/leaflet-geoman-free/dist/leaflet-geoman.css';
-import proj4 from 'proj4';
 
 import { onMounted, ref, watch } from 'vue';
-import { Button, Dropdown, InputText } from '@/lib/primevue';
-import { storeToRefs } from 'pinia';
+import { Button, Column, DataTable, Dropdown, InputText } from '@/lib/primevue';
 
-import { useConfigStore } from '@/store';
-import type { GeoJSON, Geometry } from 'geojson';
+import { dataService } from '@/services';
+import type { Geometry } from 'geojson';
 import type { Ref } from 'vue';
-
-// Types
-
-// Store
-const { getConfig } = storeToRefs(useConfigStore());
 
 const layers: Ref<Array<{ name: string; layer: L.GeoJSON<any, Geometry> }>> = ref([]);
 const selectedLayer: Ref<L.GeoJSON<any, Geometry> | undefined> = ref(undefined);
@@ -26,24 +19,33 @@ const newLayerName: Ref<string> = ref('');
 let map: L.Map;
 let layerControl: L.Control.Layers;
 
+const parcelData = ref('a');
+
 // Actions
 function createLayer() {
   if (newLayerName.value && newLayerName.value.length > 0) {
+    // add layer to map
     const newLayer = L.geoJSON().addTo(map);
     layerControl.addOverlay(newLayer, newLayerName.value);
+    // add to local state
     layers.value.push({ name: newLayerName.value, layer: newLayer });
+    // set as selected layer
+    selectedLayer.value = newLayer;
 
-    newLayer.on('click', (event) => {
-      console.log('Shape clicked!');
-      console.log('Layer', event.propagatedFrom);
-      console.log('Geojson', event.propagatedFrom.toGeoJSON());
-      if (event.propagatedFrom.getLatLngs) {
-        console.log('Coords', event.propagatedFrom.getLatLngs());
-      }
+    // on polygon create
+    map.on('pm:create', async (e) => {
+      // zoom in
+      map.fitBounds(e.layer.getBounds());
+      // show parcel data
+      showParcelData(e.layer.getLatLngs()[0]);
     });
-
-    newLayerName.value = '';
   }
+}
+
+async function showParcelData(data) {
+  await dataService.getParcelData(data).then((data) => {
+    parcelData.value = data.features.map((f) => f.properties);
+  });
 }
 
 function deleteLayer() {
@@ -80,135 +82,18 @@ onMounted(() => {
     rotateMode: false
   });
 
-  // 48.424552-123.343506,48.425691,-123.336124,48.422159,-123.327885,48.418856,123.334579, 48.419311,-123.342819,48.424552,-123.343506
-
-  const geo1: Array<GeoJSON> = [
-    {
-      type: 'Feature',
-      properties: {},
-      geometry: {
-        type: 'Polygon',
-        coordinates: [
-          [
-            [-123.343506, 48.424552],
-            [-123.336124, 48.425691],
-            [-123.327885, 48.422159],
-            [-123.334579, 48.418856],
-            [-123.342819, 48.419311],
-            [-123.343506, 48.424552]
-          ]
-        ]
-      }
-    },
-    {
-      type: 'Feature',
-      properties: {},
-      geometry: {
-        type: 'Point',
-        coordinates: [-123.357239, 48.424096]
-      }
-    }
-  ];
-
-  const geo2: Array<GeoJSON> = [
-    {
-      type: 'Feature',
-      properties: {},
-      geometry: {
-        type: 'Polygon',
-        coordinates: [
-          [
-            [-123.335094, 48.4356],
-            [-123.340588, 48.432867],
-            [-123.329773, 48.430019],
-            [-123.324623, 48.433664],
-            [-123.335094, 48.4356]
-          ]
-        ]
-      }
-    }
-  ];
-
   const baseMaps = {
     OpenStreetMap: osm
   };
 
-  var geoLayer1 = L.geoJSON().addTo(map);
-  var geoLayer2 = L.geoJSON().addTo(map);
+  layers.value = [];
 
-  layers.value = [
-    { name: 'Geo1', layer: geoLayer1 },
-    { name: 'Geo2', layer: geoLayer2 }
-  ];
-
-  const overlayMaps = {
-    Geo1: geoLayer1,
-    Geo2: geoLayer2
-  };
+  const overlayMaps = {};
 
   layerControl = L.control.layers(baseMaps, overlayMaps).addTo(map);
 
-  selectedLayer.value = geoLayer1;
-
-  geoLayer1.on('click', async (event) => {
-    console.log('Shape clicked!');
-    console.log('Layer', event.propagatedFrom);
-    console.log('Geojson', event.propagatedFrom.toGeoJSON());
-    if (event.propagatedFrom.getLatLngs) {
-      console.log('Coords', event.propagatedFrom.getLatLngs());
-    }
-
-    // get parcel data
-    await getParcelData(event.propagatedFrom.getLatLngs()[0]);
-  });
-
-  geoLayer1.addData(geo1);
-
-  geoLayer2.on('click', (event) => {
-    console.log('Shape clicked!');
-    console.log('Layer', event.propagatedFrom);
-    console.log('Geojson', event.propagatedFrom.toGeoJSON());
-    if (event.propagatedFrom.getLatLngs) {
-      console.log('Coords', event.propagatedFrom.getLatLngs());
-    }
-  });
-  geoLayer2.addData(geo2);
+  // selectedLayer.value = geoLayer1;
 });
-
-async function getParcelData(polygon) {
-  // close polygon by re-adding first point to end of array
-  const points = polygon.concat(polygon[0]);
-
-  // define the source and destination layer types
-  // leaflet map layer
-  var source = new proj4.Proj('EPSG:4326'); // gps format of leaflet map
-  // projection (BC Parcel data layer)
-  proj4.defs(
-    'EPSG:3005',
-    'PROJCS["NAD83 / BC Albers", GEOGCS["NAD83", DATUM["North_American_Datum_1983", SPHEROID["GRS 1980",6378137,298.257222101, AUTHORITY["EPSG","7019"]], TOWGS84[0,0,0,0,0,0,0], AUTHORITY["EPSG","6269"]], PRIMEM["Greenwich",0, AUTHORITY["EPSG","8901"]], UNIT["degree",0.0174532925199433, AUTHORITY["EPSG","9122"]], AUTHORITY["EPSG","4269"]], PROJECTION["Albers_Conic_Equal_Area"], PARAMETER["standard_parallel_1",50], PARAMETER["standard_parallel_2",58.5], PARAMETER["latitude_of_center",45], PARAMETER["longitude_of_center",-126], PARAMETER["false_easting",1000000], PARAMETER["false_northing",0], UNIT["metre",1, AUTHORITY["EPSG","9001"]], AXIS["Easting",EAST], AXIS["Northing",NORTH], AUTHORITY["EPSG","3005"]]'
-  );
-  var dest = new proj4.Proj('EPSG:3005');
-
-  // convert lat/long for WFS query
-  var result = points.map((point) => {
-    return proj4(source, dest, { x: point.lng, y: point.lat });
-  });
-
-  // built query string for WFS request
-  let qStr = '';
-  result.forEach((point, index, array) => {
-    qStr = qStr.concat(point.x, ' ', point.y);
-    if (index < array.length - 1) qStr = qStr.concat(', ');
-  });
-  // fetch parcel data from WFS url
-  const response = await fetch(
-    'https://openmaps.gov.bc.ca/geo/pub/wfs?SERVICE=WFS&VERSION=2.0.0&REQUEST=GetFeature&outputFormat=json&typeName=WHSE_CADASTRE.PMBC_PARCEL_FABRIC_POLY_SVW&CQL_FILTER=WITHIN(SHAPE, POLYGON ((' +
-      qStr +
-      ')))'
-  );
-  const parcelData = await response.json();
-  console.log(parcelData);
-}
 </script>
 
 <template>
@@ -239,16 +124,48 @@ async function getParcelData(polygon) {
           @click="createLayer"
         />
       </div>
+      <!-- parcel data -->
+      <!-- <ul v-if="parcelData.length">
+        <li v-for="parcelId of parcelData">{{ parcelId }}</li>
+      </ul> -->
     </div>
     <div
       id="map"
       class="flex flex-auto"
     />
   </div>
+
+  <div
+    v-if="parcelData.length"
+    class="py-2 mw-50"
+  >
+    <h3>Parcel Data</h3>
+    <DataTable
+      :value="parcelData"
+      data-key="PID"
+      class="p-datatable-sm"
+      responsive-layout="scroll"
+      :paginator="true"
+      :rows="5"
+    >
+      <Column
+        field="PID"
+        header="Parcel ID"
+      ></Column>
+      <Column
+        field="OWNER_TYPE"
+        header="Owner Type"
+      ></Column>
+      <Column
+        field="PARCEL_CLASS"
+        header="Parcel Class"
+      ></Column>
+    </DataTable>
+  </div>
 </template>
 
 <style scoped lang="scss">
 #map {
-  height: 800px;
+  height: 500px;
 }
 </style>
